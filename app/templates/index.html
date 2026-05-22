@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LocalShare</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1>LocalShare</h1>
+        </div>
+    </header>
+
+    <main>
+        {% if show_login %}
+        <div class="login-overlay">
+            <div class="login-box">
+                <h2>LocalShare</h2>
+                <p>Enter your password to access files</p>
+                <form id="loginForm">
+                    <input type="password" id="password" placeholder="Password" autocomplete="off">
+                    <button type="submit" class="btn btn-primary">Unlock</button>
+                </form>
+            </div>
+        </div>
+        {% else %}
+        <div class="breadcrumb" id="breadcrumb">
+            <a href="?path=">Root</a>
+        </div>
+
+        <div class="grid" id="fileGrid"></div>
+
+        <div class="empty" id="emptyState" style="display:none">
+            <div class="empty-icon">📁</div>
+            <p>This folder is empty</p>
+        </div>
+
+        <div class="upload-form">
+            <h3>Upload Files</h3>
+            <div class="upload-row">
+                <input type="file" id="fileInput" multiple>
+                <button class="btn btn-primary" onclick="uploadFiles()">Upload</button>
+            </div>
+        </div>
+
+        <div class="upload-form" style="margin-top:12px">
+            <h3>Create Folder</h3>
+            <div class="create-folder-form">
+                <input type="text" id="folderName" placeholder="Folder name">
+                <button class="btn btn-secondary" onclick="createFolder()">Create</button>
+            </div>
+        </div>
+        {% endif %}
+    </main>
+
+    <div class="preview-modal" id="previewModal">
+        <button class="preview-close" onclick="closePreview()">&times;</button>
+        <div id="previewContent"></div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        let currentPath = "";
+        const maxUploadMB = {{ MAX_UPLOAD_MB }};
+
+        async function loadFiles(path = "") {
+            currentPath = path;
+            const encoded = encodeURIComponent(path);
+            const res = await fetch(`/api/files?path=${encoded}`);
+            const data = await res.json();
+            updateBreadcrumb(path, data.parent);
+            renderFiles(data.items);
+        }
+
+        function updateBreadcrumb(path, parentPath) {
+            const bc = document.getElementById("breadcrumb");
+            let html = `<a href="?path=">Root</a>`;
+            if (path) {
+                const parts = path.split("/");
+                let accum = "";
+                for (let i = 0; i < parts.length; i++) {
+                    accum += (accum ? "/" : "") + parts[i];
+                    html += ` <span>/</span> <a href="?path=${encodeURIComponent(accum)}">${escapeHtml(parts[i])}</a>`;
+                }
+            }
+            bc.innerHTML = html;
+            bc.onclick = (e) => {
+                if (e.target.tagName === "A") {
+                    e.preventDefault();
+                    const p = e.target.getAttribute("href").split("=")[1];
+                    loadFiles(p || "");
+                }
+            };
+        }
+
+        function renderFiles(items) {
+            const grid = document.getElementById("fileGrid");
+            const empty = document.getElementById("emptyState");
+            if (items.length === 0) {
+                grid.innerHTML = "";
+                empty.style.display = "block";
+                return;
+            }
+            empty.style.display = "none";
+            grid.innerHTML = items.map(item => `
+                <div class="item ${item.type}" onclick="${item.type === "folder" ? `loadFiles('${escapeHtml(item.path)}')` : `preview('${escapeHtml(item.path)}')`}">
+                    ${item.has_thumbnail ? `<img class="item-thumb" src="/api/thumbnail/${encodeURIComponent(item.path)}" alt="${escapeHtml(item.name)}">` : `<div class="item-icon">${getIcon(item.type)}</div>`}
+                    <div class="item-name">${escapeHtml(item.name)}</div>
+                    ${item.type !== "folder" ? `<button class="btn btn-secondary" style="padding:6px 12px;font-size:12px" onclick="event.stopPropagation();download('${escapeHtml(item.path)}')">Download</button>` : ""}
+                </div>
+            `).join("");
+        }
+
+        function getIcon(type) {
+            switch(type) {
+                case "folder": return "📁";
+                case "image": return "🖼️";
+                case "video": return "🎬";
+                case "audio": return "🎵";
+                default: return "📄";
+            }
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement("div");
+            div.textContent = str;
+            return div.innerHTML.replace(/'/g, "&#39;");
+        }
+
+        function preview(path) {
+            const ext = path.split(".").pop().toLowerCase();
+            const imageExts = ["jpg","jpeg","png","gif","webp","svg","bmp"];
+            const videoExts = ["mp4","m4v","webm","mov","avi","mkv"];
+            const audioExts = ["mp3","wav","ogg","m4a","flac"];
+            const encoded = encodeURIComponent(path);
+            const modal = document.getElementById("previewModal");
+            const content = document.getElementById("previewContent");
+
+            if (imageExts.includes(ext)) {
+                content.innerHTML = `<img src="/api/preview/${encoded}" style="max-width:100%;max-height:90vh">`;
+            } else if (videoExts.includes(ext)) {
+                content.innerHTML = `<div class="media-player"><video src="/api/preview/${encoded}" controls playsinline preload="metadata" style="max-width:100%;max-height:80vh"></video></div>`;
+            } else if (audioExts.includes(ext)) {
+                content.innerHTML = `<div class="media-player audio-player"><div class="audio-info">${escapeHtml(path.split('/').pop())}</div><audio src="/api/preview/${encoded}" controls preload="metadata"></audio></div>`;
+            } else {
+                download(path);
+                return;
+            }
+            modal.classList.add("active");
+        }
+
+        function closePreview() {
+            document.getElementById("previewModal").classList.remove("active");
+            document.getElementById("previewContent").innerHTML = "";
+        }
+
+        function download(path) {
+            const encoded = encodeURIComponent(path);
+            window.location.href = `/api/download/${encoded}`;
+        }
+
+        async function uploadFiles() {
+            const input = document.getElementById("fileInput");
+            if (!input.files.length) {
+                showToast("No files selected", "error");
+                return;
+            }
+            const encoded = encodeURIComponent(currentPath);
+            let successCount = 0;
+            let errorCount = 0;
+            for (const file of input.files) {
+                if (file.size > maxUploadMB * 1024 * 1024) {
+                    showToast(`"${file.name}" exceeds ${maxUploadMB}MB limit`, "error");
+                    errorCount++;
+                    continue;
+                }
+                const formData = new FormData();
+                formData.append("file", file);
+                const res = await fetch(`/api/upload?path=${encoded}`, {
+                    method: "POST",
+                    body: formData
+                });
+                if (res.ok) {
+                    successCount++;
+                } else {
+                    showToast(`Failed: ${file.name}`, "error");
+                    errorCount++;
+                }
+            }
+            if (successCount > 0) {
+                showToast(`${successCount} file(s) uploaded`, "success");
+                input.value = "";
+                loadFiles(currentPath);
+            }
+        }
+
+        async function createFolder() {
+            const input = document.getElementById("folderName");
+            const name = input.value.trim();
+            if (!name) {
+                showToast("Enter a folder name", "error");
+                return;
+            }
+            const encoded = encodeURIComponent(currentPath);
+            const formData = new FormData();
+            formData.append("name", name);
+            const res = await fetch(`/api/create_folder?path=${encoded}`, {
+                method: "POST",
+                body: formData
+            });
+            if (res.ok) {
+                showToast("Folder created", "success");
+                input.value = "";
+                loadFiles(currentPath);
+            } else {
+                showToast("Failed to create folder", "error");
+            }
+        }
+
+        function showToast(message, type = "") {
+            const toast = document.getElementById("toast");
+            toast.textContent = message;
+            toast.className = "toast show " + type;
+            setTimeout(() => toast.classList.remove("show"), 3000);
+        }
+
+        document.getElementById("loginForm")?.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const password = document.getElementById("password").value;
+            const formData = new FormData();
+            formData.append("password", password);
+            const res = await fetch("/api/auth", {
+                method: "POST",
+                body: formData
+            });
+            if (res.ok) {
+                location.reload();
+            } else {
+                showToast("Invalid password", "error");
+            }
+        });
+
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") closePreview();
+        });
+
+        document.getElementById("previewModal")?.addEventListener("click", (e) => {
+            if (e.target === document.getElementById("previewModal")) closePreview();
+        });
+
+        window.addEventListener("load", () => {
+            const params = new URLSearchParams(window.location.search);
+            loadFiles(params.get("path") || "");
+        });
+    </script>
+</body>
+</html>
