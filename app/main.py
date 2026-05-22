@@ -88,13 +88,17 @@ def get_file_type(path: Path) -> str:
 async def root(request: Request):
     authenticated = check_auth(request)
     show_login = PASSWORD and not authenticated
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "shared_dir": str(SHARED_DIR),
-        "show_login": show_login,
-        "has_password": bool(PASSWORD),
-        "MAX_UPLOAD_MB": MAX_UPLOAD_MB,
-    })
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "request": request,
+            "shared_dir": str(SHARED_DIR),
+            "show_login": show_login,
+            "has_password": bool(PASSWORD),
+            "MAX_UPLOAD_MB": MAX_UPLOAD_MB,
+        }
+    )
 
 
 @app.post("/api/auth")
