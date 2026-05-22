@@ -28,7 +28,6 @@ shared/
 *.webp
 *.svg
 *.bmp
-*.txt
 *.pdf
 *.zip
 *.rar
